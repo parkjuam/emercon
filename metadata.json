@@ -1,0 +1,5 @@
+{
+  "name": "비상연락망 (Emergency Contacts)",
+  "description": "학생 이름 검색을 통해 담임 및 부담임 선생님의 연락처를 확인하고 바로 전화를 걸 수 있는 비상연락망 앱입니다.",
+  "requestFramePermissions": []
+}
