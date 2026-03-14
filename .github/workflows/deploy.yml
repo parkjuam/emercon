@@ -26,10 +26,8 @@ jobs:
           node-version: 20
           cache: 'npm'
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       - name: Build
-        # ★중요★ 아래 줄의 /저장소이름/ 부분을 선생님이 만드신 깃허브 저장소 이름으로 꼭 바꿔주세요!
-        # 예시: run: npm run build -- --base=/emergency-contacts/
         run: npm run build -- --base=/emercon/
       - name: Setup Pages
         uses: actions/configure-pages@v4
