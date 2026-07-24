@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Search, Phone, User, Users } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Search, Phone, User, Users, ShieldCheck, Plus, Trash2, ArrowLeft } from 'lucide-react';
 
 // 임시 데이터 타입 정의 (데이터를 받으면 수정할 예정입니다)
 type StudentContact = {
@@ -136,10 +136,45 @@ const MOCK_DATA: StudentContact[] = [
   { id: '111', studentName: '조이령', gradeClass: '고등 3학년2', homeroomTeacher: { name: '황신화', phone: '010-7749-7352' }, coTeacher: { name: '이수연', phone: '010-7611-5606' } },
 ];
 
+// 관리자가 추가한 학생은 브라우저 localStorage에 저장됩니다 (이 브라우저/기기에서만 유지됨).
+const CUSTOM_STUDENTS_KEY = 'emercon_custom_students';
+
+function loadCustomStudents(): StudentContact[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_STUDENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomStudents(students: StudentContact[]) {
+  try {
+    localStorage.setItem(CUSTOM_STUDENTS_KEY, JSON.stringify(students));
+  } catch {
+    // localStorage 사용 불가 (프라이빗 모드 등) 시 조용히 무시
+  }
+}
+
+type View = 'search' | 'admin';
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [view, setView] = useState<View>('search');
+  const [customStudents, setCustomStudents] = useState<StudentContact[]>([]);
+
+  // 관리자 - 학생 추가 폼 상태
+  const [newStudentClass, setNewStudentClass] = useState('');
+  const [newStudentName, setNewStudentName] = useState('');
+  const [addError, setAddError] = useState('');
+
+  useEffect(() => {
+    setCustomStudents(loadCustomStudents());
+  }, []);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,6 +183,65 @@ export default function App() {
     } else {
       alert('비밀번호가 틀렸습니다.');
     }
+  };
+
+  // 기존 반 목록과 각 반의 담임/부담임 정보 (반이 같으면 담임/부담임도 같음)
+  const classTeacherMap = useMemo(() => {
+    const map: Record<string, { homeroomTeacher: StudentContact['homeroomTeacher']; coTeacher?: StudentContact['coTeacher'] }> = {};
+    MOCK_DATA.forEach((s) => {
+      if (!map[s.gradeClass]) {
+        map[s.gradeClass] = { homeroomTeacher: s.homeroomTeacher, coTeacher: s.coTeacher };
+      }
+    });
+    return map;
+  }, []);
+
+  const uniqueClasses = useMemo(
+    () => Object.keys(classTeacherMap).sort((a, b) => a.localeCompare(b, 'ko')),
+    [classTeacherMap]
+  );
+
+  // 검색 및 화면 표시에는 기본 데이터 + 관리자가 추가한 학생을 합쳐서 사용
+  const allStudents = useMemo(() => [...MOCK_DATA, ...customStudents], [customStudents]);
+
+  const handleAddStudent = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddError('');
+
+    const trimmedName = newStudentName.trim();
+    if (!newStudentClass) {
+      setAddError('반을 선택해주세요.');
+      return;
+    }
+    if (!trimmedName) {
+      setAddError('학생 이름을 입력해주세요.');
+      return;
+    }
+
+    const teacherInfo = classTeacherMap[newStudentClass];
+    if (!teacherInfo) {
+      setAddError('선택한 반의 담임/부담임 정보를 찾을 수 없습니다.');
+      return;
+    }
+
+    const newStudent: StudentContact = {
+      id: `custom-${Date.now()}`,
+      studentName: trimmedName,
+      gradeClass: newStudentClass,
+      homeroomTeacher: teacherInfo.homeroomTeacher,
+      coTeacher: teacherInfo.coTeacher,
+    };
+
+    const updated = [...customStudents, newStudent];
+    setCustomStudents(updated);
+    saveCustomStudents(updated);
+    setNewStudentName('');
+  };
+
+  const handleDeleteCustomStudent = (id: string) => {
+    const updated = customStudents.filter((s) => s.id !== id);
+    setCustomStudents(updated);
+    saveCustomStudents(updated);
   };
 
   if (!isAuthenticated) {
@@ -174,17 +268,120 @@ export default function App() {
   }
 
   // 검색어에 따른 필터링 (검색어가 비어있으면 빈 배열 반환)
-  const filteredStudents = searchTerm.trim() === '' 
-    ? [] 
-    : MOCK_DATA.filter((student) => student.studentName.includes(searchTerm));
+  const filteredStudents = searchTerm.trim() === ''
+    ? []
+    : allStudents.filter((student) => student.studentName.includes(searchTerm));
+
+  if (view === 'admin') {
+    return (
+      <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
+        <header className="bg-blue-600 text-white p-6 shadow-md sticky top-0 z-10">
+          <div className="max-w-md mx-auto flex items-center space-x-3">
+            <button
+              onClick={() => setView('search')}
+              className="p-2 -ml-2 rounded-full hover:bg-blue-500 transition-colors"
+              aria-label="검색으로 돌아가기"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-bold">관리자 모드 - 학생 추가</h1>
+          </div>
+        </header>
+
+        <main className="max-w-md mx-auto p-4 pb-20 space-y-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <form onSubmit={handleAddStudent} className="space-y-4">
+              <div>
+                <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">반</label>
+                <select
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                  value={newStudentClass}
+                  onChange={(e) => setNewStudentClass(e.target.value)}
+                >
+                  <option value="">반을 선택하세요</option>
+                  {uniqueClasses.map((cls) => (
+                    <option key={cls} value={cls}>
+                      {cls} (담임 {classTeacherMap[cls].homeroomTeacher.name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">학생 이름</label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="학생 이름을 입력하세요"
+                  value={newStudentName}
+                  onChange={(e) => setNewStudentName(e.target.value)}
+                />
+              </div>
+
+              {addError && <p className="text-red-500 text-sm">{addError}</p>}
+
+              <button
+                type="submit"
+                className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors"
+              >
+                <Plus className="h-5 w-5" />
+                <span>학생 추가</span>
+              </button>
+            </form>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              추가된 학생 ({customStudents.length})
+            </h2>
+            {customStudents.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-6">아직 추가된 학생이 없습니다.</p>
+            ) : (
+              <div className="space-y-2">
+                {customStudents.map((student) => (
+                  <div
+                    key={student.id}
+                    className="bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3 flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-gray-900">{student.studentName}</p>
+                      <p className="text-xs text-gray-500">
+                        {student.gradeClass} · 담임 {student.homeroomTeacher.name}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteCustomStudent(student.id)}
+                      className="p-2 rounded-full hover:bg-red-50 text-red-500 transition-colors"
+                      aria-label="삭제"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
       {/* 헤더 */}
       <header className="bg-blue-600 text-white p-6 shadow-md sticky top-0 z-10">
         <div className="max-w-md mx-auto">
-          <h1 className="text-2xl font-bold text-center mb-4">비상연락망</h1>
-          
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold">비상연락망</h1>
+            <button
+              onClick={() => setView('admin')}
+              className="flex items-center space-x-1 bg-blue-500 hover:bg-blue-400 text-white text-sm font-semibold px-3 py-2 rounded-full transition-colors"
+            >
+              <ShieldCheck className="h-4 w-4" />
+              <span>관리자 모드</span>
+            </button>
+          </div>
+
           {/* 검색창 */}
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
