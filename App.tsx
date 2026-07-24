@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Phone, User, Users, ShieldCheck, Plus, Trash2, ArrowLeft } from 'lucide-react';
+import { Search, Phone, User, Users, ShieldCheck, Plus, Trash2, ArrowLeft, Pencil, RotateCcw } from 'lucide-react';
 
 // 임시 데이터 타입 정의 (데이터를 받으면 수정할 예정입니다)
 type StudentContact = {
@@ -161,6 +161,30 @@ function saveCustomStudents(students: StudentContact[]) {
   }
 }
 
+type TeacherInfo = { homeroomTeacher: { name: string; phone: string }; coTeacher?: { name: string; phone: string } };
+
+// 관리자가 수정/추가한 반별 담임·부담임 정보 (반이름 -> 담임/부담임). 브라우저 localStorage에 저장됩니다.
+const TEACHER_OVERRIDES_KEY = 'emercon_teacher_overrides';
+
+function loadTeacherOverrides(): Record<string, TeacherInfo> {
+  try {
+    const raw = localStorage.getItem(TEACHER_OVERRIDES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTeacherOverrides(overrides: Record<string, TeacherInfo>) {
+  try {
+    localStorage.setItem(TEACHER_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {
+    // localStorage 사용 불가 (프라이빗 모드 등) 시 조용히 무시
+  }
+}
+
 type View = 'search' | 'admin';
 
 export default function App() {
@@ -172,14 +196,25 @@ export default function App() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [adminLoginError, setAdminLoginError] = useState('');
+  const [teacherOverrides, setTeacherOverrides] = useState<Record<string, TeacherInfo>>({});
 
   // 관리자 - 학생 추가 폼 상태
   const [newStudentClass, setNewStudentClass] = useState('');
   const [newStudentName, setNewStudentName] = useState('');
   const [addError, setAddError] = useState('');
 
+  // 관리자 - 선생님 관리 폼 상태
+  const [teacherFormMode, setTeacherFormMode] = useState<'new' | 'edit'>('new');
+  const [teacherFormClassName, setTeacherFormClassName] = useState('');
+  const [teacherFormHomeroomName, setTeacherFormHomeroomName] = useState('');
+  const [teacherFormHomeroomPhone, setTeacherFormHomeroomPhone] = useState('');
+  const [teacherFormCoName, setTeacherFormCoName] = useState('');
+  const [teacherFormCoPhone, setTeacherFormCoPhone] = useState('');
+  const [teacherFormError, setTeacherFormError] = useState('');
+
   useEffect(() => {
     setCustomStudents(loadCustomStudents());
+    setTeacherOverrides(loadTeacherOverrides());
   }, []);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -209,9 +244,9 @@ export default function App() {
     setAdminLoginError('');
   };
 
-  // 기존 반 목록과 각 반의 담임/부담임 정보 (반이 같으면 담임/부담임도 같음)
-  const classTeacherMap = useMemo(() => {
-    const map: Record<string, { homeroomTeacher: StudentContact['homeroomTeacher']; coTeacher?: StudentContact['coTeacher'] }> = {};
+  // 기존(기본) 반 목록과 각 반의 담임/부담임 정보 (반이 같으면 담임/부담임도 같음)
+  const baseClassTeacherMap = useMemo(() => {
+    const map: Record<string, TeacherInfo> = {};
     MOCK_DATA.forEach((s) => {
       if (!map[s.gradeClass]) {
         map[s.gradeClass] = { homeroomTeacher: s.homeroomTeacher, coTeacher: s.coTeacher };
@@ -220,13 +255,29 @@ export default function App() {
     return map;
   }, []);
 
+  // 기본 데이터 + 관리자가 수정/추가한 선생님 정보를 합친 최종 반별 담임/부담임 (관리자 수정이 우선)
+  const effectiveClassTeacherMap = useMemo(
+    () => ({ ...baseClassTeacherMap, ...teacherOverrides }),
+    [baseClassTeacherMap, teacherOverrides]
+  );
+
   const uniqueClasses = useMemo(
-    () => Object.keys(classTeacherMap).sort((a, b) => a.localeCompare(b, 'ko')),
-    [classTeacherMap]
+    () => Object.keys(effectiveClassTeacherMap).sort((a, b) => a.localeCompare(b, 'ko')),
+    [effectiveClassTeacherMap]
   );
 
   // 검색 및 화면 표시에는 기본 데이터 + 관리자가 추가한 학생을 합쳐서 사용
   const allStudents = useMemo(() => [...MOCK_DATA, ...customStudents], [customStudents]);
+
+  // 선생님 정보가 관리자에 의해 수정된 경우, 학생 목록에도 최신 담임/부담임 정보를 반영
+  const resolvedStudents = useMemo(
+    () =>
+      allStudents.map((s) => {
+        const t = effectiveClassTeacherMap[s.gradeClass];
+        return t ? { ...s, homeroomTeacher: t.homeroomTeacher, coTeacher: t.coTeacher } : s;
+      }),
+    [allStudents, effectiveClassTeacherMap]
+  );
 
   const handleAddStudent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -242,7 +293,7 @@ export default function App() {
       return;
     }
 
-    const teacherInfo = classTeacherMap[newStudentClass];
+    const teacherInfo = effectiveClassTeacherMap[newStudentClass];
     if (!teacherInfo) {
       setAddError('선택한 반의 담임/부담임 정보를 찾을 수 없습니다.');
       return;
@@ -266,6 +317,73 @@ export default function App() {
     const updated = customStudents.filter((s) => s.id !== id);
     setCustomStudents(updated);
     saveCustomStudents(updated);
+  };
+
+  const resetTeacherForm = () => {
+    setTeacherFormMode('new');
+    setTeacherFormClassName('');
+    setTeacherFormHomeroomName('');
+    setTeacherFormHomeroomPhone('');
+    setTeacherFormCoName('');
+    setTeacherFormCoPhone('');
+    setTeacherFormError('');
+  };
+
+  const startEditTeacher = (className: string) => {
+    const info = effectiveClassTeacherMap[className];
+    if (!info) return;
+    setTeacherFormMode('edit');
+    setTeacherFormClassName(className);
+    setTeacherFormHomeroomName(info.homeroomTeacher.name);
+    setTeacherFormHomeroomPhone(info.homeroomTeacher.phone);
+    setTeacherFormCoName(info.coTeacher?.name ?? '');
+    setTeacherFormCoPhone(info.coTeacher?.phone ?? '');
+    setTeacherFormError('');
+  };
+
+  const handleSaveTeacher = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTeacherFormError('');
+
+    const className = teacherFormClassName.trim();
+    const homeroomName = teacherFormHomeroomName.trim();
+    const homeroomPhone = teacherFormHomeroomPhone.trim();
+    const coName = teacherFormCoName.trim();
+    const coPhone = teacherFormCoPhone.trim();
+
+    if (!className) {
+      setTeacherFormError('반 이름을 입력해주세요.');
+      return;
+    }
+    if (!homeroomName || !homeroomPhone) {
+      setTeacherFormError('담임 선생님 이름과 전화번호를 입력해주세요.');
+      return;
+    }
+    if ((coName && !coPhone) || (!coName && coPhone)) {
+      setTeacherFormError('부담임 선생님은 이름과 전화번호를 함께 입력해주세요.');
+      return;
+    }
+
+    const updated: Record<string, TeacherInfo> = {
+      ...teacherOverrides,
+      [className]: {
+        homeroomTeacher: { name: homeroomName, phone: homeroomPhone },
+        coTeacher: coName ? { name: coName, phone: coPhone } : undefined,
+      },
+    };
+    setTeacherOverrides(updated);
+    saveTeacherOverrides(updated);
+    resetTeacherForm();
+  };
+
+  const removeTeacherOverride = (className: string) => {
+    const updated = { ...teacherOverrides };
+    delete updated[className];
+    setTeacherOverrides(updated);
+    saveTeacherOverrides(updated);
+    if (teacherFormMode === 'edit' && teacherFormClassName === className) {
+      resetTeacherForm();
+    }
   };
 
   if (!isAuthenticated) {
@@ -294,7 +412,7 @@ export default function App() {
   // 검색어에 따른 필터링 (검색어가 비어있으면 빈 배열 반환)
   const filteredStudents = searchTerm.trim() === ''
     ? []
-    : allStudents.filter((student) => student.studentName.includes(searchTerm));
+    : resolvedStudents.filter((student) => student.studentName.includes(searchTerm));
 
   if (view === 'admin' && !isAdminAuthenticated) {
     return (
@@ -357,7 +475,7 @@ export default function App() {
                   <option value="">반을 선택하세요</option>
                   {uniqueClasses.map((cls) => (
                     <option key={cls} value={cls}>
-                      {cls} (담임 {classTeacherMap[cls].homeroomTeacher.name})
+                      {cls} (담임 {effectiveClassTeacherMap[cls].homeroomTeacher.name})
                     </option>
                   ))}
                 </select>
@@ -384,6 +502,148 @@ export default function App() {
                 <span>학생 추가</span>
               </button>
             </form>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                {teacherFormMode === 'edit' ? `선생님 정보 수정 (${teacherFormClassName})` : '선생님 관리 - 반 추가'}
+              </h2>
+              {teacherFormMode === 'edit' && (
+                <button
+                  onClick={resetTeacherForm}
+                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  취소
+                </button>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveTeacher} className="space-y-4">
+              <div>
+                <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">반 이름</label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:bg-gray-100 disabled:text-gray-500"
+                  placeholder="예: 초등 4학년2"
+                  value={teacherFormClassName}
+                  onChange={(e) => setTeacherFormClassName(e.target.value)}
+                  disabled={teacherFormMode === 'edit'}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">담임 이름</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="담임 이름"
+                    value={teacherFormHomeroomName}
+                    onChange={(e) => setTeacherFormHomeroomName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">담임 전화번호</label>
+                  <input
+                    type="tel"
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="010-0000-0000"
+                    value={teacherFormHomeroomPhone}
+                    onChange={(e) => setTeacherFormHomeroomPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">부담임 이름 (선택)</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="부담임 이름"
+                    value={teacherFormCoName}
+                    onChange={(e) => setTeacherFormCoName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">부담임 전화번호</label>
+                  <input
+                    type="tel"
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="010-0000-0000"
+                    value={teacherFormCoPhone}
+                    onChange={(e) => setTeacherFormCoPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {teacherFormError && <p className="text-red-500 text-sm">{teacherFormError}</p>}
+
+              <button
+                type="submit"
+                className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors"
+              >
+                {teacherFormMode === 'edit' ? (
+                  <>
+                    <Pencil className="h-5 w-5" />
+                    <span>선생님 정보 저장</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-5 w-5" />
+                    <span>반 추가</span>
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              반 / 선생님 목록 ({uniqueClasses.length})
+            </h2>
+            <div className="space-y-2">
+              {uniqueClasses.map((cls) => {
+                const info = effectiveClassTeacherMap[cls];
+                const isOverridden = Boolean(teacherOverrides[cls]);
+                return (
+                  <div key={cls} className="bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium text-gray-900">{cls}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          담임 {info.homeroomTeacher.name} ({info.homeroomTeacher.phone})
+                        </p>
+                        {info.coTeacher && (
+                          <p className="text-xs text-gray-500">
+                            부담임 {info.coTeacher.name} ({info.coTeacher.phone})
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <button
+                          onClick={() => startEditTeacher(cls)}
+                          className="p-2 rounded-full hover:bg-blue-50 text-blue-500 transition-colors"
+                          aria-label="수정"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        {isOverridden && (
+                          <button
+                            onClick={() => removeTeacherOverride(cls)}
+                            className="p-2 rounded-full hover:bg-red-50 text-red-500 transition-colors"
+                            aria-label={baseClassTeacherMap[cls] ? '기본값으로 되돌리기' : '삭제'}
+                          >
+                            {baseClassTeacherMap[cls] ? <RotateCcw className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div>
